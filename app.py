@@ -9,11 +9,17 @@ import os
 app = Flask(__name__)
 @app.route('/')
 def index():
-    user = User.query.first()
     movies = Movie.query.all()
-    return render_template('index.html', user=user, movies=movies)
+    return render_template('index.html', movies=movies)
 
+@app.errorhandler(404)
+def page_not_found(e):
+    return render_template('404.html'),404
 
+@app.context_processor
+def inject_user():
+    user = User.query.first()
+    return dict(user=user)
 
 db = SQLAlchemy(app)  # 初始化扩展，传入程序实例 app
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////' + os.path.join(app.root_path, 'data.db')
