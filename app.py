@@ -1,14 +1,18 @@
 from flask_sqlalchemy import SQLAlchemy  
 import os
 from flask import request, url_for, redirect, flash, Flask, render_template
-
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import LoginManager,UserMixin,login_user,logout_user,login_required,current_user   
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'dev'  # 等同于 app.secret_key = 'dev'
+login_manager = LoginManager(app)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
+        if not current_user.is_authenticated:
+            return redirect(url_for('index'))
         title = request.form.get('title')
         year = request.form.get('year')
         if not title or not year or len(year) > 4 or len(title) > 60:
@@ -40,6 +44,7 @@ def edit(movie_id):
     
 
 @app.route('/movie/delete/<int:movie_id>',methods=['POST'])
+@login_required
 def delete(movie_id):
     movie = Movie.query.get_or_404(movie_id)
     db.session.delete(movie)
@@ -61,9 +66,16 @@ db = SQLAlchemy(app)  # 初始化扩展，传入程序实例 app
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////' + os.path.join(app.root_path, 'data.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # 关闭对模型修改的监控
 
-class User(db.Model):
+class User(db.Model,UserMixin):
     id = db.Column(db.Integer,primary_key=True)
     name = db.Column(db.String(20))
+    username = db.Column(db.String(20))
+    password_hash = db.Column(db.String(128))
+    def set_password(self,password):
+        self.password_hash = generate_password_hash(password)
+        
+    def validate_password(self,password):
+        return check_password_hash(self.password_hash,password)
     
 class Movie(db.Model):
     id = db.Column(db.Integer,primary_key=True)
@@ -83,7 +95,26 @@ def initdb(drop):
     click.echo('Initialized database.')  # 输出提示信息
 
 
-
+@app.cli.command()
+@click.option('--username',prompt=True,help='The username used to login.')
+@click.option('--password',prompt=True,hide_input=True,confirmation_prompt=True,help='The password used to login')
+def admin(username,password):
+    """Create user."""
+    db.create_all()
+    user = User.query.first()
+    if user is not None:
+        click.echo('Update User...')
+        user.username = username
+        user.set_password(password)
+    else:
+        click.echo('Creating user...')
+        user = User(username=username,name = 'Admin')
+        user.set_password(password)
+        db.session.add(user)
+    db.session.commit()
+    click.echo('Done.')
+        
+        
 
 @app.cli.command()
 def forge():
@@ -109,3 +140,48 @@ def forge():
         db.session.add(movie)
     db.session.commit()
     click.echo('Done.')
+    
+@login_manager.user_loader
+def load_user(user_id):
+    user = User.query.get(int(user_id))
+    return user
+    
+@app.route("/login",methods=['GET','POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        # 校验username和password是否为空
+        if not username or not password:
+            flash('Invalid input.')
+            return redirect(url_for('login'))
+        user = User.query.first()
+        # 校验账号密码是否正确
+        if user.username == username and user.validate_password(password):
+            # 登陆用户
+            login_user(user)
+            flash('Login Successed.')
+            return redirect(url_for('index'))
+        
+        flash('Invalid username and password.')
+        return redirect(url_for('login'))
+    return render_template('login.html')
+            
+@app.route("/logout")
+def logout():
+    logout_user()
+    flash('Log out.')
+    return redirect(url_for('index'))
+
+
+@app.route('/settings', methods=['GET', 'POST'])
+def settings():
+    if request.method == 'POST':
+        name = request.form['name']
+        if not name or len(name) > 20:
+            flash('Invalid name.')
+        current_user.name = name
+        db.session.commit()
+        flash('Settings updated.')
+        return redirect(url_for('index'))
+    return render_template('settings.html')
